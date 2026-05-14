@@ -1,130 +1,79 @@
 # Hermes memory_tencentdb Plugin
 
-Standalone Hermes memory provider adapter for the `memory-tencentdb` Gateway.
-The repository root is the Hermes plugin root: it contains the Python provider,
-manifest, tests, and installer scripts. The Node.js Gateway/core remains an
-external runtime supplied by `@tencentdb-agent-memory/memory-tencentdb` or by a
-local source checkout.
+Hermes memory provider for the `memory-tencentdb` Gateway from TencentDB Agent
+Memory. The plugin gives Hermes a four-layer memory pipeline: raw conversation
+capture, episodic extraction, scene grouping, and persona synthesis.
 
-## What This Provides
+This repo contains the Hermes adapter only. The Node.js Gateway/runtime comes
+from the upstream package or source checkout.
 
-- Hermes `MemoryProvider` named `memory_tencentdb`.
-- Python HTTP client and supervisor for the local Node.js Gateway.
-- Local-by-default memory storage through the Gateway SQLite/JSONL backend.
-- Optional Tencent Cloud VectorDB only when the Gateway is configured for
-  `storeBackend: tcvdb`.
+## Requirements
 
-This plugin is not TencentDB. TencentDB/TCVDB is a managed cloud vector
-database and is not required for local use. Smart extraction still needs an
-OpenAI-compatible LLM endpoint, such as OpenRouter or a local Ollama-compatible
-server.
-
-## Upstream Project
-
-This repository is a standalone Hermes adapter for the original TencentDB Agent
-Memory project:
-
-- Upstream source: <https://github.com/Tencent/TencentDB-Agent-Memory>
-- Runtime package: <https://www.npmjs.com/package/@tencentdb-agent-memory/memory-tencentdb>
-
-The Gateway, memory pipeline, SQLite/JSONL storage, optional Tencent Cloud
-VectorDB support, and OpenClaw integration belong to the upstream project. This
-repo only packages the Hermes provider, supervisor, tests, and Hermes-specific
-install docs. When debugging Gateway behavior, reproduce it against the
-upstream package or source checkout first.
-
-## Architecture
-
-```text
-Hermes agent
-  -> memory_tencentdb Python provider
-  -> local memory-tencentdb Gateway
-  -> SQLite/JSONL storage by default
-  -> optional LLM endpoint for L1/L2/L3 extraction
-  -> optional Tencent Cloud VectorDB if explicitly configured
-```
-
-Layer mapping is handled by the Gateway: L0 conversation capture, L1 episodic
-extraction, L2 scene blocks, and L3 persona synthesis. The Hermes plugin keeps
-Hermes integration thin and avoids owning the Gateway data model.
-
-## Repository Layout
-
-```text
-__init__.py                  Hermes MemoryProvider entrypoint
-client.py                    HTTP client for the Gateway API
-supervisor.py                Gateway process supervisor
-plugin.yaml                  Hermes plugin manifest
-after-install.md             Post-install instructions shown by Hermes
-scripts/install.sh           Local symlink installer; optional Gateway install
-scripts/memory-tencentdb-ctl.sh
-                             Gateway config/control helper
-tests/                       Provider contract and lifecycle tests
-```
+- Hermes Agent installed.
+- Node.js 22 or newer for the Gateway runtime.
+- An OpenAI-compatible LLM endpoint for smart extraction. OpenRouter works well.
+- No Tencent Cloud VectorDB account is required. Local SQLite/JSONL storage is
+  the default unless you configure the upstream Gateway for `storeBackend: tcvdb`.
 
 ## Install
 
-From a published repository:
+Install the Hermes plugin:
 
 ```bash
 hermes plugins install ukint-vs/hermes-memory-tencentdb-plugin
 ```
 
-For local development:
+Install the Gateway runtime if you do not already have it:
+
+```bash
+~/.hermes/plugins/memory_tencentdb/scripts/install.sh --with-gateway
+```
+
+For local development, clone this repo and link it into Hermes:
 
 ```bash
 git clone git@github.com:ukint-vs/hermes-memory-tencentdb-plugin.git
 cd hermes-memory-tencentdb-plugin
-scripts/install.sh
-```
-
-The local installer links:
-
-```text
-~/.hermes/plugins/memory_tencentdb -> <repo>
-```
-
-Install the Gateway runtime from npm when you do not already have a checkout:
-
-```bash
 scripts/install.sh --with-gateway
 ```
 
-By default this installs the Gateway under:
+The installer links the plugin here:
+
+```text
+~/.hermes/plugins/memory_tencentdb
+```
+
+It installs or expects the Gateway here:
 
 ```text
 ~/.memory-tencentdb/tdai-memory-openclaw-plugin
 ```
 
-To use an existing Gateway source checkout:
+If you use a TencentDB Agent Memory source checkout instead, set:
 
 ```bash
-export TDAI_INSTALL_DIR=/path/to/TencentDB-Agent-Memory
-```
-
-For the canonical upstream checkout:
-
-```bash
-git clone https://github.com/Tencent/TencentDB-Agent-Memory.git
-export TDAI_INSTALL_DIR="$PWD/TencentDB-Agent-Memory"
+TDAI_INSTALL_DIR=/path/to/TencentDB-Agent-Memory
 ```
 
 ## Configure Hermes
 
-Enable the provider in `~/.hermes/config.yaml`:
+Enable the provider:
 
-```yaml
-memory:
-  provider: memory_tencentdb
+```bash
+hermes config set memory.provider memory_tencentdb
 ```
 
-Configure the Gateway LLM endpoint in the environment that starts Hermes:
+Add the extraction model settings to `~/.hermes/.env`:
 
 ```bash
 TDAI_LLM_BASE_URL=https://openrouter.ai/api/v1
-TDAI_LLM_API_KEY=<openrouter-key>
+TDAI_LLM_API_KEY=<your-openrouter-api-key>
 TDAI_LLM_MODEL=deepseek/deepseek-v4-flash
 ```
+
+If Hermes already has `OPENROUTER_API_KEY`, use the same value for
+`TDAI_LLM_API_KEY`. Restart Hermes or run `/reload` in an existing session so
+the new environment values load.
 
 For local Ollama-compatible endpoints:
 
@@ -134,88 +83,81 @@ TDAI_LLM_MODEL=qwen2.5:7b
 TDAI_LLM_API_KEY=
 ```
 
-Leave `storeBackend` unset for local SQLite storage. Only configure
-`storeBackend: tcvdb` when you intentionally want Tencent Cloud VectorDB.
+## Verify
 
-## Gateway Discovery
-
-The provider starts the Gateway automatically when it can find
-`src/gateway/server.ts`. Discovery order:
-
-1. `MEMORY_TENCENTDB_GATEWAY_CMD`, if set.
-2. `$TDAI_INSTALL_DIR/src/gateway/server.ts`.
-3. A Gateway checkout found by walking upward from this plugin.
-4. `~/.memory-tencentdb/tdai-memory-openclaw-plugin/src/gateway/server.ts`.
-
-Manual Gateway start is also supported:
+Check that Hermes sees the provider:
 
 ```bash
-cd "$TDAI_INSTALL_DIR"
-npx tsx src/gateway/server.ts
+hermes memory status
 ```
 
-## Configuration Reference
+Expected result:
 
-| Setting | Purpose | Default |
-| --- | --- | --- |
-| `memory.provider` | Selects this Hermes provider. | none |
-| `TDAI_INSTALL_DIR` | Gateway checkout used for auto-discovery. | `~/.memory-tencentdb/tdai-memory-openclaw-plugin` |
-| `MEMORY_TENCENTDB_GATEWAY_CMD` | Explicit command used to start the Gateway. | auto-discovered |
-| `MEMORY_TENCENTDB_GATEWAY_HOST` | Gateway bind/connect host. | `127.0.0.1` |
-| `MEMORY_TENCENTDB_GATEWAY_PORT` | Gateway bind/connect port. | `8420` |
-| `TDAI_LLM_BASE_URL` | OpenAI-compatible extraction endpoint. | `http://127.0.0.1:11434/v1` |
-| `TDAI_LLM_API_KEY` | LLM API key, if required. | empty |
-| `TDAI_LLM_MODEL` | Model used by the Gateway extraction pipeline. | `qwen2.5:7b` |
+```text
+Provider:  memory_tencentdb
+Plugin:    installed
+Status:    available
+```
 
-## Operations
-
-Use the helper script for Gateway-side configuration:
+Start Hermes normally and send a message. The provider starts the Gateway on
+first use. Check Gateway health:
 
 ```bash
-scripts/memory-tencentdb-ctl.sh status
-scripts/memory-tencentdb-ctl.sh config show
-scripts/memory-tencentdb-ctl.sh logs
+curl -fsS http://127.0.0.1:8420/health
 ```
 
-Common setup commands:
+A healthy local setup returns JSON with `status: "ok"`. Logs live under:
+
+```text
+~/.hermes/logs/memory_tencentdb/
+```
+
+To confirm smart extraction is using your model, inspect the Gateway logs:
 
 ```bash
-scripts/memory-tencentdb-ctl.sh config llm --base-url "$TDAI_LLM_BASE_URL" --model "$TDAI_LLM_MODEL"
-scripts/memory-tencentdb-ctl.sh config vdb-off
+grep -i "standalone-runner" ~/.hermes/logs/memory_tencentdb/gateway.stdout.log
 ```
 
-If Hermes cannot list the provider, check that
-`~/.hermes/plugins/memory_tencentdb/plugin.yaml` exists and that the symlink
-points at this repository.
+You should see `model=deepseek/deepseek-v4-flash` or your configured model.
 
-## Test
-
-Set `HERMES_AGENT_ROOT` if Hermes is not installed at
-`~/.hermes/hermes-agent`:
+## Useful Commands
 
 ```bash
-HERMES_AGENT_ROOT=~/.hermes/hermes-agent python3 -m pytest
+~/.hermes/plugins/memory_tencentdb/scripts/memory-tencentdb-ctl.sh status
+~/.hermes/plugins/memory_tencentdb/scripts/memory-tencentdb-ctl.sh config show
+~/.hermes/plugins/memory_tencentdb/scripts/memory-tencentdb-ctl.sh logs
 ```
 
-Gateway integration tests are skipped by default. Enable them explicitly:
+Switch Gateway storage back to local SQLite:
 
 ```bash
-TDAI_E2E_REAL_GATEWAY=1 TDAI_INSTALL_DIR=/path/to/gateway python3 -m pytest
+~/.hermes/plugins/memory_tencentdb/scripts/memory-tencentdb-ctl.sh config vdb-off
 ```
 
-Before release, also run:
+## Troubleshooting
+
+Provider is not listed: check that `~/.hermes/plugins/memory_tencentdb` exists
+and contains `plugin.yaml`.
+
+Gateway is not reachable: check whether port `8420` is already in use:
 
 ```bash
-python3 -m py_compile __init__.py client.py supervisor.py tests/*.py
-bash -n scripts/install.sh
-bash -n scripts/memory-tencentdb-ctl.sh
+lsof -nP -iTCP:8420 -sTCP:LISTEN
 ```
 
-## Release Checklist
+Smart extraction is not running: confirm `TDAI_LLM_API_KEY`,
+`TDAI_LLM_BASE_URL`, and `TDAI_LLM_MODEL` are present in the Hermes process
+environment. Then restart Hermes or run `/reload`.
 
-1. Confirm `plugin.yaml` version and `CHANGELOG.md` match.
-2. Run the validation commands above.
-3. Install into a temporary `HERMES_HOME` and confirm provider discovery.
-4. Push a signed or reviewed commit to `main`.
-5. Recheck compatibility with `@tencentdb-agent-memory/memory-tencentdb`.
-6. Tag the release when Gateway runtime compatibility is confirmed.
+Search works but vector search is disabled: the Gateway can still capture L0
+and extract L1 memories. Without an embedding service it falls back to text
+search.
+
+## Upstream
+
+- TencentDB Agent Memory: <https://github.com/Tencent/TencentDB-Agent-Memory>
+- Runtime package: <https://www.npmjs.com/package/@tencentdb-agent-memory/memory-tencentdb>
+
+The upstream project owns the Gateway, memory pipeline, OpenClaw integration,
+local storage engine, and optional Tencent Cloud VectorDB integration. This
+repo only packages the Hermes adapter.
