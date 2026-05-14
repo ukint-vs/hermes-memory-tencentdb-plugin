@@ -6,3 +6,4 @@
 - Added Hermes-only install script and standalone provider tests.
 - Documented local SQLite default storage and external Gateway dependency.
 - Added publish-ready README, contributor guidelines, and project notice.
+- Added explicit upstream TencentDB Agent Memory references.

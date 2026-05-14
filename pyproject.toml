@@ -6,6 +6,12 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 
+[project.urls]
+Homepage = "https://github.com/ukint-vs/hermes-memory-tencentdb-plugin"
+Repository = "https://github.com/ukint-vs/hermes-memory-tencentdb-plugin"
+Upstream = "https://github.com/Tencent/TencentDB-Agent-Memory"
+Runtime = "https://www.npmjs.com/package/@tencentdb-agent-memory/memory-tencentdb"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

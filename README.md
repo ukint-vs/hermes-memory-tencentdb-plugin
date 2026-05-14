@@ -19,6 +19,20 @@ database and is not required for local use. Smart extraction still needs an
 OpenAI-compatible LLM endpoint, such as OpenRouter or a local Ollama-compatible
 server.
 
+## Upstream Project
+
+This repository is a standalone Hermes adapter for the original TencentDB Agent
+Memory project:
+
+- Upstream source: <https://github.com/Tencent/TencentDB-Agent-Memory>
+- Runtime package: <https://www.npmjs.com/package/@tencentdb-agent-memory/memory-tencentdb>
+
+The Gateway, memory pipeline, SQLite/JSONL storage, optional Tencent Cloud
+VectorDB support, and OpenClaw integration belong to the upstream project. This
+repo only packages the Hermes provider, supervisor, tests, and Hermes-specific
+install docs. When debugging Gateway behavior, reproduce it against the
+upstream package or source checkout first.
+
 ## Architecture
 
 ```text
@@ -86,6 +100,13 @@ To use an existing Gateway source checkout:
 
 ```bash
 export TDAI_INSTALL_DIR=/path/to/TencentDB-Agent-Memory
+```
+
+For the canonical upstream checkout:
+
+```bash
+git clone https://github.com/Tencent/TencentDB-Agent-Memory.git
+export TDAI_INSTALL_DIR="$PWD/TencentDB-Agent-Memory"
 ```
 
 ## Configure Hermes
@@ -196,4 +217,5 @@ bash -n scripts/memory-tencentdb-ctl.sh
 2. Run the validation commands above.
 3. Install into a temporary `HERMES_HOME` and confirm provider discovery.
 4. Push a signed or reviewed commit to `main`.
-5. Tag the release when the Gateway runtime compatibility is confirmed.
+5. Recheck compatibility with `@tencentdb-agent-memory/memory-tencentdb`.
+6. Tag the release when Gateway runtime compatibility is confirmed.
