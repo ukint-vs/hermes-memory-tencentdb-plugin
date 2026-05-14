@@ -26,6 +26,8 @@ try:
     from memory_tencentdb import (
         MemoryTencentdbProvider,
         _discover_gateway_cmd,
+        _resolve_gateway_host,
+        _resolve_gateway_port,
     )
     from memory_tencentdb.supervisor import GatewaySupervisor
     from memory_tencentdb import supervisor as supervisor_module
@@ -37,17 +39,61 @@ except ImportError as e:  # pragma: no cover - environment-dependent
     )
 
 
-def test_config_schema_writes_tdai_llm_env_vars() -> None:
+def test_config_schema_uses_config_yaml_for_non_secret_fields() -> None:
     schema = MemoryTencentdbProvider().get_config_schema()
     fields = {field["key"]: field for field in schema}
     env_by_key = {key: field.get("env_var") for key, field in fields.items()}
 
+    assert env_by_key["tdai_install_dir"] is None
+    assert env_by_key["gateway_cmd"] is None
+    assert env_by_key["gateway_host"] is None
+    assert env_by_key["gateway_port"] is None
     assert env_by_key["llm_api_key"] == "TDAI_LLM_API_KEY"
-    assert env_by_key["llm_base_url"] == "TDAI_LLM_BASE_URL"
-    assert env_by_key["llm_model"] == "TDAI_LLM_MODEL"
+    assert env_by_key["llm_base_url"] is None
+    assert env_by_key["llm_model"] is None
     assert fields["llm_api_key"]["required"] is False
-    assert fields["llm_base_url"]["default"] == "http://127.0.0.1:11434/v1"
-    assert fields["llm_model"]["default"] == "qwen2.5:7b"
+    assert fields["llm_base_url"]["default"] == "https://openrouter.ai/api/v1"
+    assert fields["llm_model"]["default"] == "deepseek/deepseek-v4-flash"
+
+
+def test_save_config_writes_plugins_section(tmp_path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "memory:\n  provider: memory_tencentdb\nplugins:\n  enabled:\n  - enzyme\n",
+        encoding="utf-8",
+    )
+
+    MemoryTencentdbProvider().save_config(
+        {
+            "tdai_install_dir": "~/.memory-tencentdb/tdai-memory-openclaw-plugin",
+            "gateway_host": "127.0.0.1",
+            "gateway_port": "8420",
+            "llm_base_url": "https://openrouter.ai/api/v1",
+            "llm_model": "deepseek/deepseek-v4-flash",
+            "llm_api_key": "must-not-be-written",
+        },
+        str(tmp_path),
+    )
+
+    import yaml
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    plugin_config = saved["plugins"]["memory-tencentdb"]
+
+    assert saved["plugins"]["enabled"] == ["enzyme"]
+    assert plugin_config["gateway_port"] == "8420"
+    assert plugin_config["llm_model"] == "deepseek/deepseek-v4-flash"
+    assert "llm_api_key" not in plugin_config
+
+
+def test_env_overrides_plugin_config_for_runtime_values(monkeypatch) -> None:
+    config = {"gateway_host": "configured-host", "gateway_port": "8420"}
+
+    monkeypatch.setenv("MEMORY_TENCENTDB_GATEWAY_HOST", "127.0.0.2")
+    monkeypatch.setenv("MEMORY_TENCENTDB_GATEWAY_PORT", "18420")
+
+    assert _resolve_gateway_host(config) == "127.0.0.2"
+    assert _resolve_gateway_port(config) == 18420
 
 
 def test_gateway_auto_discovery_prefers_tdai_install_dir(tmp_path, monkeypatch) -> None:

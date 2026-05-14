@@ -57,23 +57,49 @@ TDAI_INSTALL_DIR=/path/to/TencentDB-Agent-Memory
 
 ## Configure Hermes
 
-Enable the provider:
+Use Hermes' memory setup wizard:
+
+```bash
+hermes memory setup
+```
+
+Choose `memory_tencentdb`. The setup flow stores non-secret plugin settings in
+`~/.hermes/config.yaml` and stores the LLM API key in `~/.hermes/.env`.
+Explicit environment variables still override config values.
+
+Expected config shape:
+
+```yaml
+memory:
+  provider: memory_tencentdb
+
+plugins:
+  memory-tencentdb:
+    tdai_install_dir: ~/.memory-tencentdb/tdai-memory-openclaw-plugin
+    gateway_host: 127.0.0.1
+    gateway_port: '8420'
+    llm_base_url: https://openrouter.ai/api/v1
+    llm_model: deepseek/deepseek-v4-flash
+```
+
+Expected `.env` entry:
+
+```bash
+TDAI_LLM_API_KEY=<your-openrouter-api-key>
+```
+
+Manual setup is also fine:
 
 ```bash
 hermes config set memory.provider memory_tencentdb
-```
-
-Add the extraction model settings to `~/.hermes/.env`:
-
-```bash
 TDAI_LLM_BASE_URL=https://openrouter.ai/api/v1
 TDAI_LLM_API_KEY=<your-openrouter-api-key>
 TDAI_LLM_MODEL=deepseek/deepseek-v4-flash
 ```
 
-If Hermes already has `OPENROUTER_API_KEY`, use the same value for
-`TDAI_LLM_API_KEY`. Restart Hermes or run `/reload` in an existing session so
-the new environment values load.
+If Hermes already has `OPENROUTER_API_KEY`, use the same value for the setup
+wizard's `llm_api_key` prompt. Restart Hermes or run `/reload` in an existing
+session so the new environment values load.
 
 For local Ollama-compatible endpoints:
 

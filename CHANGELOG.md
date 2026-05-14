@@ -8,3 +8,4 @@
 - Added publish-ready README, contributor guidelines, and project notice.
 - Added explicit upstream TencentDB Agent Memory references.
 - Reworked README into a shorter Hermes user install guide.
+- Added Hermes-style plugin config support under `plugins.memory-tencentdb`.

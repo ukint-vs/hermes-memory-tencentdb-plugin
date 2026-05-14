@@ -1,6 +1,12 @@
 # memory_tencentdb Installed
 
-Enable the provider in `~/.hermes/config.yaml`:
+Run the Hermes setup wizard and choose `memory_tencentdb`:
+
+```bash
+hermes memory setup
+```
+
+Or enable the provider in `~/.hermes/config.yaml`:
 
 ```yaml
 memory:

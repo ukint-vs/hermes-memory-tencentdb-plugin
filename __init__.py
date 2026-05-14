@@ -7,7 +7,8 @@ The Gateway runs the memory-tencentdb Core engine (the same engine used by
 the OpenClaw plugin) as an HTTP service. This provider translates Hermes
 lifecycle events into Gateway API calls.
 
-Config via environment variables:
+Config via ``plugins.memory-tencentdb`` in ``$HERMES_HOME/config.yaml`` or
+environment variables:
   MEMORY_TENCENTDB_GATEWAY_HOST — Gateway host (default: 127.0.0.1)
   MEMORY_TENCENTDB_GATEWAY_PORT — Gateway port (default: 8420)
   MEMORY_TENCENTDB_GATEWAY_CMD  — Command to start the Gateway (optional; if
@@ -92,9 +93,80 @@ _WATCHDOG_SHUTDOWN_TIMEOUT_SECS = 2.0
 # Gateway networking defaults (kept here so is_available/initialize stay in sync)
 _DEFAULT_GATEWAY_HOST = "127.0.0.1"
 _DEFAULT_GATEWAY_PORT = 8420
+_PLUGIN_CONFIG_KEY = "memory-tencentdb"
+_PLUGIN_CONFIG_ALIASES = (_PLUGIN_CONFIG_KEY, "memory_tencentdb")
 
 
-def _resolve_gateway_port(default: int = _DEFAULT_GATEWAY_PORT) -> int:
+def _load_plugin_config() -> Dict[str, Any]:
+    """Load non-secret plugin config from Hermes config.yaml."""
+    try:
+        from hermes_cli.config import load_config
+        config = load_config()
+    except Exception:
+        return {}
+    plugins = config.get("plugins") if isinstance(config, dict) else {}
+    if not isinstance(plugins, dict):
+        return {}
+    for key in _PLUGIN_CONFIG_ALIASES:
+        section = plugins.get(key)
+        if isinstance(section, dict):
+            return dict(section)
+    return {}
+
+
+def _configured_text(
+    config: Dict[str, Any],
+    key: str,
+    env_var: str,
+    default: str = "",
+    *,
+    prefer_env: bool = True,
+) -> str:
+    """Resolve a string setting from plugin config and env."""
+    if prefer_env:
+        env_value = os.environ.get(env_var, "").strip()
+        if env_value:
+            return env_value
+    value = config.get(key)
+    if value is not None and str(value).strip():
+        return str(value).strip()
+    env_value = os.environ.get(env_var, "").strip()
+    if env_value:
+        return env_value
+    return default
+
+
+def _apply_plugin_config_to_env(config: Dict[str, Any]) -> None:
+    """Expose config.yaml settings as env vars for the Node Gateway process."""
+    mappings = {
+        "tdai_install_dir": "TDAI_INSTALL_DIR",
+        "llm_base_url": "TDAI_LLM_BASE_URL",
+        "llm_model": "TDAI_LLM_MODEL",
+    }
+    for key, env_var in mappings.items():
+        value = _configured_text(config, key, env_var)
+        if value:
+            os.environ[env_var] = value
+
+    api_key = _configured_text(config, "llm_api_key", "TDAI_LLM_API_KEY", prefer_env=True)
+    if api_key:
+        os.environ["TDAI_LLM_API_KEY"] = api_key
+
+    for tdai_key, legacy_key in (
+        ("TDAI_LLM_API_KEY", "MEMORY_TENCENTDB_LLM_API_KEY"),
+        ("TDAI_LLM_BASE_URL", "MEMORY_TENCENTDB_LLM_BASE_URL"),
+        ("TDAI_LLM_MODEL", "MEMORY_TENCENTDB_LLM_MODEL"),
+    ):
+        if os.environ.get(tdai_key) and not os.environ.get(legacy_key):
+            os.environ[legacy_key] = os.environ[tdai_key]
+        if os.environ.get(legacy_key) and not os.environ.get(tdai_key):
+            os.environ[tdai_key] = os.environ[legacy_key]
+
+
+def _resolve_gateway_port(
+    config: Optional[Dict[str, Any]] = None,
+    default: int = _DEFAULT_GATEWAY_PORT,
+) -> int:
     """Resolve MEMORY_TENCENTDB_GATEWAY_PORT with validation.
 
     Accepts surrounding whitespace. Falls back to ``default`` and logs a
@@ -103,8 +175,14 @@ def _resolve_gateway_port(default: int = _DEFAULT_GATEWAY_PORT) -> int:
     exception-safe (required by the provider registration contract) and
     gives users a clear diagnostic instead of a raw ValueError stack.
     """
-    raw = os.environ.get("MEMORY_TENCENTDB_GATEWAY_PORT")
-    if raw is None or not raw.strip():
+    config = config or {}
+    raw = _configured_text(
+        config,
+        "gateway_port",
+        "MEMORY_TENCENTDB_GATEWAY_PORT",
+        str(default),
+    )
+    if not raw.strip():
         return default
     try:
         port = int(raw.strip())
@@ -125,13 +203,18 @@ def _resolve_gateway_port(default: int = _DEFAULT_GATEWAY_PORT) -> int:
     return port
 
 
-def _resolve_gateway_host(default: str = _DEFAULT_GATEWAY_HOST) -> str:
+def _resolve_gateway_host(
+    config: Optional[Dict[str, Any]] = None,
+    default: str = _DEFAULT_GATEWAY_HOST,
+) -> str:
     """Resolve MEMORY_TENCENTDB_GATEWAY_HOST, trimming whitespace."""
-    raw = os.environ.get("MEMORY_TENCENTDB_GATEWAY_HOST")
-    if raw is None:
-        return default
-    host = raw.strip()
-    return host or default
+    config = config or {}
+    return _configured_text(
+        config,
+        "gateway_host",
+        "MEMORY_TENCENTDB_GATEWAY_HOST",
+        default,
+    ) or default
 
 
 # Candidate locations searched by _discover_gateway_cmd() when the user has not
@@ -151,7 +234,7 @@ _GATEWAY_DISCOVERY_HOME_PATHS = (
 )
 
 
-def _discover_gateway_cmd() -> Optional[str]:
+def _discover_gateway_cmd(config: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """Best-effort fallback to locate the Node Gateway entry point.
 
     Called only when ``MEMORY_TENCENTDB_GATEWAY_CMD`` is unset, so that a fresh
@@ -183,7 +266,8 @@ def _discover_gateway_cmd() -> Optional[str]:
 
     here = Path(__file__).resolve()
     plugin_root_candidates: List[Path] = []
-    install_dir = os.environ.get("TDAI_INSTALL_DIR", "").strip()
+    config = config or {}
+    install_dir = _configured_text(config, "tdai_install_dir", "TDAI_INSTALL_DIR")
     if install_dir:
         plugin_root_candidates.append(Path(install_dir).expanduser())
 
@@ -684,19 +768,20 @@ class MemoryTencentdbProvider(MemoryProvider):
         Prefers local config checks (env vars) to avoid blocking network calls.
         Only falls back to health check when no env config is present.
         """
-        # Fast path: env var configured → assume available (will verify in initialize)
-        if os.environ.get("MEMORY_TENCENTDB_GATEWAY_CMD"):
+        config = _load_plugin_config()
+        _apply_plugin_config_to_env(config)
+
+        # Fast path: config/env var configured -> assume available.
+        if _configured_text(config, "gateway_cmd", "MEMORY_TENCENTDB_GATEWAY_CMD"):
             return True
-        if os.environ.get("MEMORY_TENCENTDB_GATEWAY_PORT"):
-            return True
-        if _discover_gateway_cmd():
+        if _discover_gateway_cmd(config):
             return True
         # Slow path: no env config, try a quick health check.
         # Use validated resolvers so a malformed env var never raises here
         # (is_available must never throw: it's called during provider
         # registration and an exception would break the whole plugin).
-        host = _resolve_gateway_host()
-        port = _resolve_gateway_port()
+        host = _resolve_gateway_host(config)
+        port = _resolve_gateway_port(config)
         client = MemoryTencentdbSdkClient(base_url=f"http://{host}:{port}", timeout=2)
         try:
             result = client.health(timeout=2)
@@ -726,13 +811,17 @@ class MemoryTencentdbProvider(MemoryProvider):
         self._session_id = session_id
         self._user_id = kwargs.get("user_id", "default")
 
-        host = _resolve_gateway_host()
-        port = _resolve_gateway_port()
-        # Priority: explicit env var → auto-discovery (in-tree / $HOME fallbacks).
-        # Auto-discovery lets fresh checkouts work without manual CMD wiring;
-        # it only runs when the env var is not set, so existing deployments
-        # are unaffected.
-        gateway_cmd = os.environ.get("MEMORY_TENCENTDB_GATEWAY_CMD") or _discover_gateway_cmd()
+        config = _load_plugin_config()
+        _apply_plugin_config_to_env(config)
+
+        host = _resolve_gateway_host(config)
+        port = _resolve_gateway_port(config)
+        # Priority: plugin config/env var -> auto-discovery.
+        # Auto-discovery lets fresh checkouts work without manual CMD wiring.
+        gateway_cmd = (
+            _configured_text(config, "gateway_cmd", "MEMORY_TENCENTDB_GATEWAY_CMD")
+            or _discover_gateway_cmd(config)
+        )
 
         self._supervisor = GatewaySupervisor(
             host=host,
@@ -1061,25 +1150,64 @@ class MemoryTencentdbProvider(MemoryProvider):
 
     # -- Config ---------------------------------------------------------------
 
+    def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
+        """Write non-secret plugin config under plugins.memory-tencentdb."""
+        from pathlib import Path
+
+        allowed = {
+            "tdai_install_dir",
+            "gateway_cmd",
+            "gateway_host",
+            "gateway_port",
+            "llm_base_url",
+            "llm_model",
+        }
+        sanitized = {
+            key: str(value)
+            for key, value in (values or {}).items()
+            if key in allowed and value is not None and str(value).strip()
+        }
+
+        config_path = Path(hermes_home) / "config.yaml"
+        try:
+            import yaml
+            existing: Dict[str, Any] = {}
+            if config_path.exists():
+                with open(config_path, encoding="utf-8-sig") as f:
+                    existing = yaml.safe_load(f) or {}
+            if not isinstance(existing, dict):
+                existing = {}
+            plugins = existing.setdefault("plugins", {})
+            if not isinstance(plugins, dict):
+                plugins = {}
+                existing["plugins"] = plugins
+            plugins[_PLUGIN_CONFIG_KEY] = sanitized
+            with open(config_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(existing, f, sort_keys=False)
+        except Exception as e:
+            logger.warning("Failed to write memory-tencentdb plugin config: %s", e)
+
     def get_config_schema(self) -> List[Dict[str, Any]]:
         return [
             {
+                "key": "tdai_install_dir",
+                "description": "memory-tencentdb Gateway runtime directory",
+                "default": "~/.memory-tencentdb/tdai-memory-openclaw-plugin",
+            },
+            {
                 "key": "gateway_cmd",
                 "description": "Command to start the memory-tencentdb Gateway (e.g. 'node --import tsx /path/to/server.ts')",
-                "env_var": "MEMORY_TENCENTDB_GATEWAY_CMD",
                 "required": False,
             },
             {
                 "key": "gateway_host",
                 "description": "Gateway host",
                 "default": "127.0.0.1",
-                "env_var": "MEMORY_TENCENTDB_GATEWAY_HOST",
             },
             {
                 "key": "gateway_port",
                 "description": "Gateway port",
                 "default": "8420",
-                "env_var": "MEMORY_TENCENTDB_GATEWAY_PORT",
             },
             {
                 "key": "llm_api_key",
@@ -1087,18 +1215,17 @@ class MemoryTencentdbProvider(MemoryProvider):
                 "secret": True,
                 "required": False,
                 "env_var": "TDAI_LLM_API_KEY",
+                "url": "https://openrouter.ai/keys",
             },
             {
                 "key": "llm_base_url",
                 "description": "OpenAI-compatible LLM base URL. Use a local endpoint for self-hosted mode, e.g. Ollama/vLLM/LM Studio.",
-                "default": "http://127.0.0.1:11434/v1",
-                "env_var": "TDAI_LLM_BASE_URL",
+                "default": "https://openrouter.ai/api/v1",
             },
             {
                 "key": "llm_model",
                 "description": "LLM model name exposed by the configured endpoint",
-                "default": "qwen2.5:7b",
-                "env_var": "TDAI_LLM_MODEL",
+                "default": "deepseek/deepseek-v4-flash",
             },
         ]
 
