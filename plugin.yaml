@@ -1,0 +1,9 @@
+manifest_version: 1
+name: memory_tencentdb
+display_name: memory-tencentdb
+version: 0.1.0
+kind: exclusive
+description: "memory-tencentdb four-layer memory: L0 conversation recording, L1 episodic extraction, L2 scene blocks, L3 persona synthesis via local Node.js Gateway."
+hooks:
+  - on_memory_write
+  - on_session_end

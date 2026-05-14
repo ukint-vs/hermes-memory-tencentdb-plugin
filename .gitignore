@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+.DS_Store
+dist/
+build/
+*.egg-info/
+gateway.stdout.log
+gateway.stderr.log
