@@ -13,7 +13,8 @@ import os
 import shlex
 import subprocess
 import time
-from typing import IO, Optional
+from pathlib import Path
+from typing import IO, Dict, Optional
 
 try:
     from .client import MemoryTencentdbSdkClient
@@ -33,6 +34,12 @@ HEALTH_CHECK_RETRIES = 3     # retries for is_running check
 
 # Log file rotation parameters
 LOG_TAIL_BYTES_ON_CRASH = 2048  # bytes of stderr log to surface on startup crash
+
+_LLM_ENV_BRIDGES = (
+    ("TDAI_LLM_API_KEY", "MEMORY_TENCENTDB_LLM_API_KEY"),
+    ("TDAI_LLM_BASE_URL", "MEMORY_TENCENTDB_LLM_BASE_URL"),
+    ("TDAI_LLM_MODEL", "MEMORY_TENCENTDB_LLM_MODEL"),
+)
 
 
 class GatewaySupervisor:
@@ -151,15 +158,8 @@ class GatewaySupervisor:
             # config, while the Node Gateway reads TDAI_* directly.
             env["TDAI_GATEWAY_PORT"] = str(self._port)
             env["TDAI_GATEWAY_HOST"] = self._host
-            for tdai_key, legacy_key in (
-                ("TDAI_LLM_API_KEY", "MEMORY_TENCENTDB_LLM_API_KEY"),
-                ("TDAI_LLM_BASE_URL", "MEMORY_TENCENTDB_LLM_BASE_URL"),
-                ("TDAI_LLM_MODEL", "MEMORY_TENCENTDB_LLM_MODEL"),
-            ):
-                if not env.get(tdai_key) and env.get(legacy_key):
-                    env[tdai_key] = env[legacy_key]
-                if not env.get(legacy_key) and env.get(tdai_key):
-                    env[legacy_key] = env[tdai_key]
+            self._apply_hermes_env_fallbacks(env)
+            self._bridge_llm_env(env)
 
             # Redirect child stdout/stderr to log files instead of PIPE.
             # Using PIPE without an active reader will deadlock the child once
@@ -203,6 +203,85 @@ class GatewaySupervisor:
 
         # Wait for health check
         return self._wait_for_health()
+
+    def _apply_hermes_env_fallbacks(self, env: Dict[str, str]) -> None:
+        """Fill Gateway env from Hermes' .env file when os.environ is missing it."""
+        dotenv = self._read_hermes_dotenv()
+        if not dotenv:
+            return
+
+        for tdai_key, legacy_key in _LLM_ENV_BRIDGES:
+            # A value already present in the parent process environment wins.
+            # Only consult .env when neither side of the alias pair is set.
+            if env.get(tdai_key) or env.get(legacy_key):
+                continue
+            if dotenv.get(tdai_key):
+                env[tdai_key] = dotenv[tdai_key]
+            elif dotenv.get(legacy_key):
+                env[legacy_key] = dotenv[legacy_key]
+
+        # Convenience fallback for common Hermes provider keys. Do not override
+        # explicit TDAI settings because they are the Gateway-specific contract.
+        if not env.get("TDAI_LLM_API_KEY") and not env.get("MEMORY_TENCENTDB_LLM_API_KEY"):
+            if dotenv.get("OPENROUTER_API_KEY"):
+                env["TDAI_LLM_API_KEY"] = dotenv["OPENROUTER_API_KEY"]
+                env.setdefault("TDAI_LLM_BASE_URL", "https://openrouter.ai/api/v1")
+            elif dotenv.get("DEEPSEEK_API_KEY"):
+                env["TDAI_LLM_API_KEY"] = dotenv["DEEPSEEK_API_KEY"]
+
+    def _bridge_llm_env(self, env: Dict[str, str]) -> None:
+        """Keep TDAI_* and legacy MEMORY_TENCENTDB_* LLM names in sync."""
+        for tdai_key, legacy_key in _LLM_ENV_BRIDGES:
+            if not env.get(tdai_key) and env.get(legacy_key):
+                env[tdai_key] = env[legacy_key]
+            if not env.get(legacy_key) and env.get(tdai_key):
+                env[legacy_key] = env[tdai_key]
+
+    def _read_hermes_dotenv(self) -> Dict[str, str]:
+        """Read `$HERMES_HOME/.env` without mutating the parent process env."""
+        env_path = self._hermes_home() / ".env"
+        if not env_path.exists():
+            return {}
+
+        try:
+            from dotenv import dotenv_values
+            values = dotenv_values(env_path)
+            return {
+                str(key): str(value)
+                for key, value in values.items()
+                if key and value is not None and str(value).strip()
+            }
+        except Exception:
+            return self._parse_dotenv_lines(env_path)
+
+    def _hermes_home(self) -> Path:
+        raw = os.environ.get("HERMES_HOME", "").strip()
+        if raw:
+            return Path(raw).expanduser()
+        try:
+            from hermes_constants import get_hermes_home
+            return get_hermes_home()
+        except Exception:
+            home = os.environ.get("HOME") or os.environ.get("USERPROFILE") or "~"
+            return Path(home).expanduser() / ".hermes"
+
+    def _parse_dotenv_lines(self, env_path: Path) -> Dict[str, str]:
+        parsed: Dict[str, str] = {}
+        try:
+            lines = env_path.read_text(encoding="utf-8-sig").splitlines()
+        except OSError:
+            return parsed
+
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and value:
+                parsed[key] = value
+        return parsed
 
     def _resolve_log_dir(self) -> str:
         """Pick a directory to store Gateway stdout/stderr logs.

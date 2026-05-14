@@ -178,3 +178,107 @@ def test_supervisor_bridges_legacy_llm_env_to_gateway_env(tmp_path, monkeypatch)
     assert supervisor.ensure_running() is True
     assert captured["env"]["TDAI_LLM_API_KEY"] == "legacy-key"
     assert captured["env"]["MEMORY_TENCENTDB_LLM_API_KEY"] == "legacy-key"
+
+
+def test_supervisor_reads_hermes_dotenv_for_gateway_env(tmp_path, monkeypatch) -> None:
+    captured = {}
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return None
+
+    hermes_home = tmp_path / "hermes"
+    hermes_home.mkdir()
+    (hermes_home / ".env").write_text(
+        "\n".join(
+            [
+                "TDAI_LLM_API_KEY=dotenv-tdai-key",
+                "TDAI_LLM_BASE_URL=https://openrouter.ai/api/v1",
+                "TDAI_LLM_MODEL=deepseek/deepseek-v4-flash",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("MEMORY_TENCENTDB_LOG_DIR", str(tmp_path))
+    for key in (
+        "TDAI_LLM_API_KEY",
+        "TDAI_LLM_BASE_URL",
+        "TDAI_LLM_MODEL",
+        "MEMORY_TENCENTDB_LLM_API_KEY",
+        "MEMORY_TENCENTDB_LLM_BASE_URL",
+        "MEMORY_TENCENTDB_LLM_MODEL",
+        "OPENROUTER_API_KEY",
+        "DEEPSEEK_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(GatewaySupervisor, "is_running", lambda self: False)
+    monkeypatch.setattr(GatewaySupervisor, "_wait_for_health", lambda self: True)
+
+    def capture_popen(argv, **kwargs):
+        captured["env"] = kwargs["env"]
+        return FakeProcess()
+
+    monkeypatch.setattr(supervisor_module.subprocess, "Popen", capture_popen)
+
+    supervisor = GatewaySupervisor(
+        host="127.0.0.1",
+        port=18422,
+        gateway_cmd="node fake-gateway.js",
+    )
+
+    assert supervisor.ensure_running() is True
+    assert captured["env"]["TDAI_LLM_API_KEY"] == "dotenv-tdai-key"
+    assert captured["env"]["MEMORY_TENCENTDB_LLM_API_KEY"] == "dotenv-tdai-key"
+    assert captured["env"]["TDAI_LLM_BASE_URL"] == "https://openrouter.ai/api/v1"
+    assert captured["env"]["TDAI_LLM_MODEL"] == "deepseek/deepseek-v4-flash"
+
+
+def test_supervisor_uses_openrouter_key_dotenv_fallback(tmp_path, monkeypatch) -> None:
+    captured = {}
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self):
+            return None
+
+    hermes_home = tmp_path / "hermes"
+    hermes_home.mkdir()
+    (hermes_home / ".env").write_text(
+        "OPENROUTER_API_KEY=dotenv-openrouter-key\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setenv("MEMORY_TENCENTDB_LOG_DIR", str(tmp_path))
+    for key in (
+        "TDAI_LLM_API_KEY",
+        "TDAI_LLM_BASE_URL",
+        "MEMORY_TENCENTDB_LLM_API_KEY",
+        "MEMORY_TENCENTDB_LLM_BASE_URL",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(GatewaySupervisor, "is_running", lambda self: False)
+    monkeypatch.setattr(GatewaySupervisor, "_wait_for_health", lambda self: True)
+
+    def capture_popen(argv, **kwargs):
+        captured["env"] = kwargs["env"]
+        return FakeProcess()
+
+    monkeypatch.setattr(supervisor_module.subprocess, "Popen", capture_popen)
+
+    supervisor = GatewaySupervisor(
+        host="127.0.0.1",
+        port=18423,
+        gateway_cmd="node fake-gateway.js",
+    )
+
+    assert supervisor.ensure_running() is True
+    assert captured["env"]["TDAI_LLM_API_KEY"] == "dotenv-openrouter-key"
+    assert captured["env"]["MEMORY_TENCENTDB_LLM_API_KEY"] == "dotenv-openrouter-key"
+    assert captured["env"]["TDAI_LLM_BASE_URL"] == "https://openrouter.ai/api/v1"

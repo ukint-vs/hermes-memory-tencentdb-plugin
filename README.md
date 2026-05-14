@@ -171,9 +171,10 @@ Gateway is not reachable: check whether port `8420` is already in use:
 lsof -nP -iTCP:8420 -sTCP:LISTEN
 ```
 
-Smart extraction is not running: confirm `TDAI_LLM_API_KEY`,
-`TDAI_LLM_BASE_URL`, and `TDAI_LLM_MODEL` are present in the Hermes process
-environment. Then restart Hermes or run `/reload`.
+Smart extraction is not running: confirm `TDAI_LLM_API_KEY` exists in
+`~/.hermes/.env` and `llm_base_url` / `llm_model` exist under
+`plugins.memory-tencentdb` in `~/.hermes/config.yaml`. The plugin passes these
+values to the Gateway subprocess when it starts.
 
 Search works but vector search is disabled: the Gateway can still capture L0
 and extract L1 memories. Without an embedding service it falls back to text

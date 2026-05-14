@@ -9,3 +9,4 @@
 - Added explicit upstream TencentDB Agent Memory references.
 - Reworked README into a shorter Hermes user install guide.
 - Added Hermes-style plugin config support under `plugins.memory-tencentdb`.
+- Fixed Gateway subprocess LLM env propagation from Hermes `.env`.
